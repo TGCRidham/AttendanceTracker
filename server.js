@@ -9,10 +9,8 @@ const timezone = require("dayjs/plugin/timezone");
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-// ✅ Detect current server timezone automatically
-const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-console.log("Server Timezone:", SERVER_TIMEZONE);
+// ✅ Force IST
+const SERVER_TIMEZONE = "Asia/Kolkata";
 
 const app = express();
 app.use(express.json());
@@ -22,13 +20,33 @@ app.use(express.static("public"));
 const KEKA_API =
     "https://triveniglobalsoft.keka.com/k/attendance/api/mytime/attendance/summary";
 
+
+// ✅ Format seconds to HH:mm:ss
+function formatSeconds(totalSeconds) {
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+
+    return `${hrs}h ${mins}m ${secs}s`;
+}
+
+
 app.post("/attendance", async (req, res) => {
     try {
         const token = req.body.token;
+        const productiveHoursInput = req.body.productiveHours;
 
         if (!token) {
             return res.status(400).json({ error: "Token is required" });
         }
+
+        if (!productiveHoursInput || isNaN(productiveHoursInput)) {
+            return res.status(400).json({ error: "Valid productive hours required" });
+        }
+
+        // ✅ Convert productive hours → seconds
+        const productiveHours = Number(productiveHoursInput);
+        const targetSeconds = Math.floor(productiveHours * 60 * 60);
 
         const response = await fetch(KEKA_API, {
             method: "GET",
@@ -50,7 +68,6 @@ app.post("/attendance", async (req, res) => {
         const result = await response.json();
         const allDays = result.data || [];
 
-        // ✅ Use server timezone instead of manual +5:30
         const todayStr = dayjs().tz(SERVER_TIMEZONE).format("YYYY-MM-DD");
 
         const todayAttendance = allDays.find((day) =>
@@ -61,95 +78,87 @@ app.post("/attendance", async (req, res) => {
             return res.json({ error: "No attendance record found for today." });
         }
 
-        const requiredMs =
-            (todayAttendance.shiftEffectiveDuration || 8) * 60 * 60 * 1000;
-
         const entries =
             todayAttendance.timeEntries ||
             todayAttendance.originalTimeEntries ||
             [];
 
-        entries.sort(
-            (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-        );
+        entries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
         let pairs = [];
         let currentIn = null;
 
         entries.forEach((entry) => {
-            const status = entry.punchStatus;
-            const time = entry.timestamp;
-
-            if (status === 0) {
+            if (entry.punchStatus === 0) {
                 currentIn = {
-                    inTime: time,
+                    inTime: entry.timestamp,
                     outTime: null,
-                    location: entry.premiseName || "Surat-414",
+                    location: entry.premiseName || "Office",
                 };
                 pairs.push(currentIn);
             }
 
-            if (status === 1 && currentIn) {
-                currentIn.outTime = time;
+            if (entry.punchStatus === 1 && currentIn) {
+                currentIn.outTime = entry.timestamp;
                 currentIn = null;
             }
         });
 
-        let completedMs = 0;
-        let lastInTimeMs = null;
+        let totalWorkedSeconds = 0;
+        let lastInTime = null;
 
-        const formatTime = (time) => {
-            if (!time) return null;
-            return dayjs(time)
+        pairs.forEach((pair) => {
+            const inTime = dayjs(pair.inTime).tz(SERVER_TIMEZONE);
+
+            if (pair.outTime) {
+                const outTime = dayjs(pair.outTime).tz(SERVER_TIMEZONE);
+                totalWorkedSeconds += outTime.diff(inTime, "second");
+            } else {
+                lastInTime = inTime;
+            }
+        });
+
+        // ✅ If currently punched IN → include running time
+        if (lastInTime) {
+            const now = dayjs().tz(SERVER_TIMEZONE);
+            totalWorkedSeconds += now.diff(lastInTime, "second");
+        }
+
+        const remainingSeconds = Math.max(
+            targetSeconds - totalWorkedSeconds,
+            0
+        );
+
+        // ✅ Leave time with seconds
+        let leaveTime;
+
+        if (remainingSeconds === 0) {
+            leaveTime = dayjs()
                 .tz(SERVER_TIMEZONE)
                 .format("hh:mm:ss A");
-        };
+        } else {
+            leaveTime = dayjs()
+                .tz(SERVER_TIMEZONE)
+                .add(remainingSeconds, "second")
+                .format("hh:mm:ss A");
+        }
 
         const inOutList = pairs.map((pair) => ({
-            in: formatTime(pair.inTime),
-            out: formatTime(pair.outTime),
+            in: pair.inTime
+                ? dayjs(pair.inTime).tz(SERVER_TIMEZONE).format("hh:mm:ss A")
+                : null,
+            out: pair.outTime
+                ? dayjs(pair.outTime).tz(SERVER_TIMEZONE).format("hh:mm:ss A")
+                : null,
             isMissing: !pair.outTime,
             location: pair.location,
         }));
 
-        pairs.forEach((pair) => {
-            if (pair.inTime) {
-                const inT = new Date(pair.inTime).getTime();
-
-                if (pair.outTime) {
-                    completedMs += new Date(pair.outTime).getTime() - inT;
-                } else {
-                    lastInTimeMs = inT;
-                }
-            }
-        });
-
-        // ✅ Use timezone-aware current time
-        const now = dayjs().tz(SERVER_TIMEZONE).valueOf();
-
-        let runningMs = lastInTimeMs ? now - lastInTimeMs : 0;
-
-        const totalWorkedMs = completedMs + runningMs;
-        const remainingMs = Math.max(requiredMs - totalWorkedMs, 0);
-
-        function formatMs(ms) {
-            const h = Math.floor(ms / 3600000);
-            const m = Math.floor((ms % 3600000) / 60000);
-            return `${h}h ${m}m`;
-        }
-
-        const leaveTimeResult =
-            remainingMs === 0
-                ? dayjs().tz(SERVER_TIMEZONE).format("hh:mm:ss A")
-                : dayjs(now + remainingMs)
-                    .tz(SERVER_TIMEZONE)
-                    .format("hh:mm:ss A");
-
         res.json({
             timezone: SERVER_TIMEZONE,
-            worked: formatMs(totalWorkedMs),
-            remaining: formatMs(remainingMs),
-            leaveTime: leaveTimeResult,
+            worked: formatSeconds(totalWorkedSeconds),
+            remaining: formatSeconds(remainingSeconds),
+            leaveTime,
             inOutList,
         });
 
@@ -158,6 +167,7 @@ app.post("/attendance", async (req, res) => {
     }
 });
 
-app.listen(3000, () =>
-    console.log("Server running at http://localhost:3000")
-);
+app.listen(3000, () => {
+    console.log("Server running at http://localhost:3000");
+    console.log("Timezone fixed to:", SERVER_TIMEZONE);
+});
