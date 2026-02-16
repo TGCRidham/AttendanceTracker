@@ -2,6 +2,18 @@ const express = require("express");
 const fetch = require("node-fetch");
 const cors = require("cors");
 
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+// ✅ Detect current server timezone automatically
+const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+console.log("Server Timezone:", SERVER_TIMEZONE);
+
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -38,9 +50,8 @@ app.post("/attendance", async (req, res) => {
         const result = await response.json();
         const allDays = result.data || [];
 
-        const todayStr = new Date(
-            Date.now() + 5.5 * 60 * 60 * 1000
-        ).toISOString().split("T")[0];
+        // ✅ Use server timezone instead of manual +5:30
+        const todayStr = dayjs().tz(SERVER_TIMEZONE).format("YYYY-MM-DD");
 
         const todayAttendance = allDays.find((day) =>
             day.attendanceDate?.includes(todayStr)
@@ -53,13 +64,11 @@ app.post("/attendance", async (req, res) => {
         const requiredMs =
             (todayAttendance.shiftEffectiveDuration || 8) * 60 * 60 * 1000;
 
-        // ✅ USE timeEntries
         const entries =
             todayAttendance.timeEntries ||
             todayAttendance.originalTimeEntries ||
             [];
 
-        // sort by timestamp
         entries.sort(
             (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
         );
@@ -72,7 +81,6 @@ app.post("/attendance", async (req, res) => {
             const time = entry.timestamp;
 
             if (status === 0) {
-                // IN
                 currentIn = {
                     inTime: time,
                     outTime: null,
@@ -82,7 +90,6 @@ app.post("/attendance", async (req, res) => {
             }
 
             if (status === 1 && currentIn) {
-                // OUT
                 currentIn.outTime = time;
                 currentIn = null;
             }
@@ -93,12 +100,9 @@ app.post("/attendance", async (req, res) => {
 
         const formatTime = (time) => {
             if (!time) return null;
-            return new Date(time).toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-                hour12: true,
-            });
+            return dayjs(time)
+                .tz(SERVER_TIMEZONE)
+                .format("hh:mm:ss A");
         };
 
         const inOutList = pairs.map((pair) => ({
@@ -120,7 +124,9 @@ app.post("/attendance", async (req, res) => {
             }
         });
 
-        const now = Date.now();
+        // ✅ Use timezone-aware current time
+        const now = dayjs().tz(SERVER_TIMEZONE).valueOf();
+
         let runningMs = lastInTimeMs ? now - lastInTimeMs : 0;
 
         const totalWorkedMs = completedMs + runningMs;
@@ -134,20 +140,13 @@ app.post("/attendance", async (req, res) => {
 
         const leaveTimeResult =
             remainingMs === 0
-                ? new Date().toLocaleTimeString("en-US", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                    hour12: true,
-                })
-                : new Date(now + remainingMs).toLocaleTimeString("en-US", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                    hour12: true,
-                });
+                ? dayjs().tz(SERVER_TIMEZONE).format("hh:mm:ss A")
+                : dayjs(now + remainingMs)
+                    .tz(SERVER_TIMEZONE)
+                    .format("hh:mm:ss A");
 
         res.json({
+            timezone: SERVER_TIMEZONE,
             worked: formatMs(totalWorkedMs),
             remaining: formatMs(remainingMs),
             leaveTime: leaveTimeResult,
