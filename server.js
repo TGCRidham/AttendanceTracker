@@ -9,7 +9,6 @@ const timezone = require("dayjs/plugin/timezone");
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-// ✅ Force IST
 const SERVER_TIMEZONE = "Asia/Kolkata";
 
 const app = express();
@@ -20,7 +19,6 @@ app.use(express.static("public"));
 const KEKA_API =
     "https://triveniglobalsoft.keka.com/k/attendance/api/mytime/attendance/summary";
 
-
 // ✅ Format seconds to HH:mm:ss
 function formatSeconds(totalSeconds) {
     const hrs = Math.floor(totalSeconds / 3600);
@@ -30,21 +28,15 @@ function formatSeconds(totalSeconds) {
     return `${hrs}h ${mins}m ${secs}s`;
 }
 
-
 app.post("/attendance", async (req, res) => {
     try {
         const token = req.body.token;
         const productiveHoursInput = req.body.productiveHours;
 
-        if (!token) {
-            return res.status(400).json({ error: "Token is required" });
-        }
-
-        if (!productiveHoursInput || isNaN(productiveHoursInput)) {
+        if (!token) return res.status(400).json({ error: "Token is required" });
+        if (!productiveHoursInput || isNaN(productiveHoursInput))
             return res.status(400).json({ error: "Valid productive hours required" });
-        }
 
-        // ✅ Convert productive hours → seconds
         const productiveHours = Number(productiveHoursInput);
         const targetSeconds = Math.floor(productiveHours * 60 * 60);
 
@@ -70,7 +62,7 @@ app.post("/attendance", async (req, res) => {
 
         const todayStr = dayjs().tz(SERVER_TIMEZONE).format("YYYY-MM-DD");
 
-        const todayAttendance = allDays.find((day) =>
+        const todayAttendance = allDays.find(day =>
             day.attendanceDate?.includes(todayStr)
         );
 
@@ -83,12 +75,13 @@ app.post("/attendance", async (req, res) => {
             todayAttendance.originalTimeEntries ||
             [];
 
+        // ✅ Sort by timestamp
         entries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
         let pairs = [];
         let currentIn = null;
 
-        entries.forEach((entry) => {
+        entries.forEach(entry => {
             if (entry.punchStatus === 0) {
                 currentIn = {
                     inTime: entry.timestamp,
@@ -107,11 +100,11 @@ app.post("/attendance", async (req, res) => {
         let totalWorkedSeconds = 0;
         let lastInTime = null;
 
-        pairs.forEach((pair) => {
-            const inTime = dayjs(pair.inTime).tz(SERVER_TIMEZONE);
+        pairs.forEach(pair => {
+            const inTime = dayjs.utc(pair.inTime).tz(SERVER_TIMEZONE);
 
             if (pair.outTime) {
-                const outTime = dayjs(pair.outTime).tz(SERVER_TIMEZONE);
+                const outTime = dayjs.utc(pair.outTime).tz(SERVER_TIMEZONE);
                 totalWorkedSeconds += outTime.diff(inTime, "second");
             } else {
                 lastInTime = inTime;
@@ -124,32 +117,18 @@ app.post("/attendance", async (req, res) => {
             totalWorkedSeconds += now.diff(lastInTime, "second");
         }
 
-        const remainingSeconds = Math.max(
-            targetSeconds - totalWorkedSeconds,
-            0
-        );
+        const remainingSeconds = Math.max(targetSeconds - totalWorkedSeconds, 0);
 
-        // ✅ Leave time with seconds
         let leaveTime;
-
         if (remainingSeconds === 0) {
-            leaveTime = dayjs()
-                .tz(SERVER_TIMEZONE)
-                .format("hh:mm:ss A");
+            leaveTime = dayjs().tz(SERVER_TIMEZONE).format("HH:mm:ss");
         } else {
-            leaveTime = dayjs()
-                .tz(SERVER_TIMEZONE)
-                .add(remainingSeconds, "second")
-                .format("hh:mm:ss A");
+            leaveTime = dayjs().tz(SERVER_TIMEZONE).add(remainingSeconds, "second").format("HH:mm:ss");
         }
 
-        const inOutList = pairs.map((pair) => ({
-            in: pair.inTime
-                ? dayjs(pair.inTime).tz(SERVER_TIMEZONE).format("hh:mm:ss A")
-                : null,
-            out: pair.outTime
-                ? dayjs(pair.outTime).tz(SERVER_TIMEZONE).format("hh:mm:ss A")
-                : null,
+        const inOutList = pairs.map(pair => ({
+            in: pair.inTime ? dayjs.utc(pair.inTime).tz(SERVER_TIMEZONE).format("HH:mm:ss") : null,
+            out: pair.outTime ? dayjs.utc(pair.outTime).tz(SERVER_TIMEZONE).format("HH:mm:ss") : null,
             isMissing: !pair.outTime,
             location: pair.location,
         }));
@@ -163,6 +142,7 @@ app.post("/attendance", async (req, res) => {
         });
 
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: error.message });
     }
 });
