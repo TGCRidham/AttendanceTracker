@@ -100,6 +100,9 @@
         <h2>Attendance Tracker</h2>
         <input type="password" id="token" placeholder="Paste Keka Bearer Token">
         <button onclick="calculate()">Find Leave Time</button>
+        <button onclick="clearToken()" style="margin-top:10px; background:#f44336;">
+            Clear Saved Token
+        </button>
 
         <div id="error" class="error"></div>
 
@@ -122,8 +125,17 @@
     </div>
 
     <script>
+        // Load token when page opens
+        window.onload = function () {
+            const savedToken = localStorage.getItem("keka_token");
+            if (savedToken) {
+                document.getElementById("token").value = savedToken;
+            }
+        };
+
         async function calculate() {
-            const token = document.getElementById('token').value;
+            const tokenInput = document.getElementById('token');
+            const token = tokenInput.value.trim();
             const errorDiv = document.getElementById('error');
             const logsContainer = document.getElementById('logs');
 
@@ -132,38 +144,53 @@
                 return;
             }
 
+            // ✅ Save token in localStorage
+            localStorage.setItem("keka_token", token);
+
             errorDiv.innerText = "";
             logsContainer.innerHTML = "";
 
-            const res = await fetch('/attendance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token })
-            });
+            try {
+                const res = await fetch('/attendance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
 
-            const data = await res.json();
+                const data = await res.json();
 
-            if (data.error) {
-                errorDiv.innerText = data.error;
-                return;
+                if (data.error) {
+                    errorDiv.innerText = data.error;
+                    return;
+                }
+
+                document.getElementById('results').style.display = 'block';
+                document.getElementById('worked').innerText = data.worked;
+                document.getElementById('remaining').innerText = data.remaining;
+                document.getElementById('leaveTime').innerText = data.leaveTime;
+
+                data.inOutList.forEach(item => {
+                    logsContainer.innerHTML += `
+                    <div class="log-card">
+                        <div class="location">${item.location}</div>
+                        <div class="log-row">
+                            <span class="in">↓ ${item.in || '-'}</span>
+                            <span class="out">↗ ${item.out || 'MISSING'}</span>
+                        </div>
+                    </div>
+                `;
+                });
+
+            } catch (err) {
+                errorDiv.innerText = "Something went wrong!";
             }
+        }
 
-            document.getElementById('results').style.display = 'block';
-            document.getElementById('worked').innerText = data.worked;
-            document.getElementById('remaining').innerText = data.remaining;
-            document.getElementById('leaveTime').innerText = data.leaveTime;
-
-            data.inOutList.forEach(item => {
-                logsContainer.innerHTML += `
-          <div class="log-card">
-            <div class="location">${item.location}</div>
-            <div class="log-row">
-              <span class="in">↓ ${item.in || '-'}</span>
-              <span class="out">↗ ${item.out || 'MISSING'}</span>
-            </div>
-          </div>
-        `;
-            });
+        // Optional: Clear token function
+        function clearToken() {
+            localStorage.removeItem("keka_token");
+            document.getElementById("token").value = "";
+            alert("Token cleared!");
         }
     </script>
 </body>
