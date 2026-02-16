@@ -98,8 +98,14 @@
 <body>
     <div class="card">
         <h2>Attendance Tracker</h2>
+
         <input type="password" id="token" placeholder="Paste Keka Bearer Token">
-        <button onclick="calculate()">Find Leave Time</button>
+
+        <!-- ✅ NEW FIELD ADDED -->
+        <input type="number" id="productiveHours" placeholder="Enter Productive Hours (e.g. 8.5)" step="0.1">
+
+        <button onclick="calculate()">Find Leave Time.</button>
+
         <button onclick="clearToken()" style="margin-top:10px; background:#f44336;">
             Clear Saved Token
         </button>
@@ -125,17 +131,27 @@
     </div>
 
     <script>
-        // Load token when page opens
+        // Load token & productive hours when page opens
         window.onload = function () {
             const savedToken = localStorage.getItem("keka_token");
+            const savedHours = localStorage.getItem("productive_hours");
+
             if (savedToken) {
                 document.getElementById("token").value = savedToken;
+            }
+
+            if (savedHours) {
+                document.getElementById("productiveHours").value = savedHours;
             }
         };
 
         async function calculate() {
             const tokenInput = document.getElementById('token');
+            const productiveHoursInput = document.getElementById('productiveHours');
+
             const token = tokenInput.value.trim();
+            const productiveHours = productiveHoursInput.value.trim();
+
             const errorDiv = document.getElementById('error');
             const logsContainer = document.getElementById('logs');
 
@@ -144,8 +160,14 @@
                 return;
             }
 
-            // ✅ Save token in localStorage
+            if (!productiveHours || productiveHours <= 0) {
+                errorDiv.innerText = "Please enter valid productive hours";
+                return;
+            }
+
+            // ✅ Save to localStorage
             localStorage.setItem("keka_token", token);
+            localStorage.setItem("productive_hours", productiveHours);
 
             errorDiv.innerText = "";
             logsContainer.innerHTML = "";
@@ -154,7 +176,10 @@
                 const res = await fetch('/attendance', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token })
+                    body: JSON.stringify({
+                        token,
+                        productiveHours   // ✅ PASSED TO API
+                    })
                 });
 
                 const data = await res.json();
@@ -186,11 +211,12 @@
             }
         }
 
-        // Optional: Clear token function
         function clearToken() {
             localStorage.removeItem("keka_token");
+            localStorage.removeItem("productive_hours");
             document.getElementById("token").value = "";
-            alert("Token cleared!");
+            document.getElementById("productiveHours").value = "";
+            alert("Token & Productive Hours cleared!");
         }
     </script>
 </body>
