@@ -100,11 +100,12 @@ app.post("/attendance", async (req, res) => {
         let totalWorkedSeconds = 0;
         let lastInTime = null;
 
+        // ✅ Parse timestamps directly, do not use utc().tz()
         pairs.forEach(pair => {
-            const inTime = dayjs.utc(pair.inTime).tz(SERVER_TIMEZONE);
+            const inTime = dayjs(pair.inTime);
 
             if (pair.outTime) {
-                const outTime = dayjs.utc(pair.outTime).tz(SERVER_TIMEZONE);
+                const outTime = dayjs(pair.outTime);
                 totalWorkedSeconds += outTime.diff(inTime, "second");
             } else {
                 lastInTime = inTime;
@@ -113,22 +114,23 @@ app.post("/attendance", async (req, res) => {
 
         // ✅ If currently punched IN → include running time
         if (lastInTime) {
-            const now = dayjs().tz(SERVER_TIMEZONE);
+            const now = dayjs();
             totalWorkedSeconds += now.diff(lastInTime, "second");
         }
 
         const remainingSeconds = Math.max(targetSeconds - totalWorkedSeconds, 0);
 
+        // ✅ Leave time with seconds in 12-hour format
         let leaveTime;
         if (remainingSeconds === 0) {
-            leaveTime = dayjs().tz(SERVER_TIMEZONE).format("HH:mm:ss");
+            leaveTime = dayjs().format("hh:mm:ss A");
         } else {
-            leaveTime = dayjs().tz(SERVER_TIMEZONE).add(remainingSeconds, "second").format("HH:mm:ss");
+            leaveTime = dayjs().add(remainingSeconds, "second").format("hh:mm:ss A");
         }
 
         const inOutList = pairs.map(pair => ({
-            in: pair.inTime ? dayjs.utc(pair.inTime).tz(SERVER_TIMEZONE).format("HH:mm:ss") : null,
-            out: pair.outTime ? dayjs.utc(pair.outTime).tz(SERVER_TIMEZONE).format("HH:mm:ss") : null,
+            in: pair.inTime ? dayjs(pair.inTime).format("hh:mm:ss A") : null,
+            out: pair.outTime ? dayjs(pair.outTime).format("hh:mm:ss A") : null,
             isMissing: !pair.outTime,
             location: pair.location,
         }));
